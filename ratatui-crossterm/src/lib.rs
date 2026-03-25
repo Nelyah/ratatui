@@ -236,7 +236,8 @@ where
         for (x, y, cell) in content {
             // Move the cursor if the previous location was not (x - 1, y)
             if x != last_x.wrapping_add(1) || y != last_y {
-                queue!(self.writer, MoveTo(x, y))?;
+                // Write MoveTo ANSI directly: \x1b[{y+1};{x+1}H
+                write!(self.writer, "\x1b[{};{}H", y + 1, x + 1)?;
             }
             last_x = x;
             last_y = y;
