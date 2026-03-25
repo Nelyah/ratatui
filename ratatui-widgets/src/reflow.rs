@@ -293,30 +293,29 @@ where
             current_alignment = *alignment;
 
             for StyledGrapheme { symbol, style } in current_line {
+                let symbol_width = symbol.cell_width();
                 // Ignore characters wider that the total max width.
-                if symbol.cell_width() > self.max_line_width {
+                if symbol_width > self.max_line_width {
                     continue;
                 }
 
-                if current_line_width + symbol.cell_width() > self.max_line_width {
+                if current_line_width + symbol_width > self.max_line_width {
                     // Truncate line
                     break;
                 }
 
-                let symbol = if horizontal_offset == 0 || Alignment::Left != *alignment {
-                    symbol
-                } else {
-                    let w = symbol.cell_width();
-                    if w > horizontal_offset {
+                let (symbol, symbol_width) =
+                    if horizontal_offset == 0 || Alignment::Left != *alignment {
+                        (symbol, symbol_width)
+                    } else if symbol_width > horizontal_offset {
                         let t = trim_offset(symbol, horizontal_offset);
                         horizontal_offset = 0;
-                        t
+                        (t, t.cell_width())
                     } else {
-                        horizontal_offset -= w;
-                        ""
-                    }
-                };
-                current_line_width += symbol.cell_width();
+                        horizontal_offset -= symbol_width;
+                        ("", 0)
+                    };
+                current_line_width += symbol_width;
                 self.current_line.push(StyledGrapheme { symbol, style });
             }
         }

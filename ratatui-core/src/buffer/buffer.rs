@@ -404,10 +404,17 @@ impl Buffer {
     /// [`Color`]: crate::style::Color
     pub fn set_style<S: Into<Style>>(&mut self, area: Rect, style: S) {
         let style = style.into();
+        if style == Style::new() {
+            return;
+        }
         let area = self.area.intersection(area);
+        let width = self.area.width as usize;
+        let x_offset = (area.left() - self.area.x) as usize;
+        let row_width = area.width as usize;
         for y in area.top()..area.bottom() {
-            for x in area.left()..area.right() {
-                self[(x, y)].set_style(style);
+            let row_start = (y - self.area.y) as usize * width + x_offset;
+            for cell in &mut self.content[row_start..row_start + row_width] {
+                cell.set_style(style);
             }
         }
     }

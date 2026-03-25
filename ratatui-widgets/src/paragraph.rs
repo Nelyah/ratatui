@@ -1,6 +1,8 @@
 //! The [`Paragraph`] widget and related types allows displaying a block of text with optional
 //! wrapping, alignment, and block styling.
-use ratatui_core::buffer::{Buffer, CellWidth};
+use alloc::vec::Vec;
+
+use ratatui_core::buffer::{Buffer, Cell, CellWidth};
 use ratatui_core::layout::{Alignment, Position, Rect};
 use ratatui_core::style::{Style, Styled};
 use ratatui_core::text::{Line, StyledGrapheme, Text};
@@ -421,7 +423,8 @@ impl Paragraph<'_> {
             return;
         }
 
-        buf.set_style(text_area, self.style);
+        // Note: buf.set_style(area, self.style) is already called by Widget::render on the full
+        // area (which includes text_area), so we skip the redundant call here.
         let styled = self.text.iter().map(|line| {
             let graphemes = line.styled_graphemes(self.text.style);
             let alignment = line.alignment.unwrap_or(self.alignment);
@@ -437,8 +440,82 @@ impl Paragraph<'_> {
                 }
             }
             render_lines(line_composer, text_area, buf);
+        } else if self.scroll.x == 0 {
+            // Fast path: no wrapping, no horizontal scroll.
+            // Render directly into the buffer in a single pass, avoiding LineTruncator
+            // buffering. For ASCII spans, also bypass unicode segmentation entirely.
+            let max_width = text_area.width as usize;
+            let buf_width = buf.area.width as usize;
+            let area_x = (text_area.left() - buf.area.x) as usize;
+            let area_y = (text_area.top() - buf.area.y) as usize;
+            let text_style = self.text.style;
+
+            for (y, line) in self
+                .text
+                .iter()
+                .skip(self.scroll.y as usize)
+                .enumerate()
+            {
+                if y >= text_area.height as usize {
+                    break;
+                }
+                let alignment = line.alignment.unwrap_or(self.alignment);
+                let row_start = (area_y + y) * buf_width + area_x;
+                let row = &mut buf.content[row_start..row_start + max_width];
+
+                if alignment == Alignment::Left {
+                    // Single-pass left-aligned rendering
+                    let line_style = text_style.patch(line.style);
+                    let mut x = 0usize;
+                    for span in line.iter() {
+                        if x >= max_width {
+                            break;
+                        }
+                        let style = line_style.patch(span.style);
+                        let content = span.content.as_ref();
+                        if content.is_ascii() {
+                            // ASCII fast path: each byte is a grapheme with width 1
+                            for (i, &byte) in content.as_bytes().iter().enumerate() {
+                                if x >= max_width {
+                                    break;
+                                }
+                                if byte < 0x20 || byte == 0x7f {
+                                    continue; // skip control chars
+                                }
+                                // Safe: content is ASCII, so byte boundary i..i+1 is valid
+                                #[expect(clippy::string_slice)]
+                                row[x].set_symbol(&content[i..i + 1]).set_style(style);
+                                x += 1;
+                            }
+                        } else {
+                            // Unicode fallback
+                            for grapheme in
+                                unicode_segmentation::UnicodeSegmentation::graphemes(content, true)
+                            {
+                                if grapheme.contains(char::is_control) {
+                                    continue;
+                                }
+                                let width = grapheme.cell_width();
+                                if width == 0 {
+                                    continue;
+                                }
+                                if x + width as usize > max_width {
+                                    break;
+                                }
+                                let symbol = if grapheme.is_empty() { " " } else { grapheme };
+                                row[x].set_symbol(symbol).set_style(style);
+                                x += width as usize;
+                            }
+                        }
+                    }
+                } else {
+                    // Non-left-aligned: use graphemes iterator (needs width for offset)
+                    let graphemes = line.styled_graphemes(text_style);
+                    render_line_direct(graphemes, row, text_area.width, alignment);
+                }
+            }
         } else {
-            // avoid unnecessary work by skipping directly to the relevant line before rendering
+            // Slow path: horizontal scroll requires LineTruncator for offset handling
             let lines = styled.skip(self.scroll.y as usize);
             let mut line_composer = LineTruncator::new(lines, text_area.width);
             line_composer.set_horizontal_offset(self.scroll.x);
@@ -459,7 +536,9 @@ fn render_lines<'a, C: LineComposer<'a>>(mut composer: C, area: Rect, buf: &mut 
 }
 
 fn render_line(wrapped: &WrappedLine<'_, '_>, area: Rect, buf: &mut Buffer, y: u16) {
-    let mut x = get_line_offset(wrapped.width, area.width, wrapped.alignment);
+    let mut x = get_line_offset(wrapped.width, area.width, wrapped.alignment) as usize;
+    let row_start = buf.index_of(area.left(), area.top() + y);
+    let content = &mut buf.content[row_start..];
     for StyledGrapheme { symbol, style } in wrapped.graphemes {
         let width = symbol.cell_width();
         if width == 0 {
@@ -467,9 +546,59 @@ fn render_line(wrapped: &WrappedLine<'_, '_>, area: Rect, buf: &mut Buffer, y: u
         }
         // Make sure to overwrite any previous character with a space (rather than a zero-width)
         let symbol = if symbol.is_empty() { " " } else { symbol };
-        let position = Position::new(area.left() + x, area.top() + y);
-        buf[position].set_symbol(symbol).set_style(*style);
-        x += width;
+        content[x].set_symbol(symbol).set_style(*style);
+        x += width as usize;
+    }
+}
+
+/// Renders a line of styled graphemes directly into a pre-sliced buffer row.
+/// For left-aligned text, renders in a single pass. For other alignments, needs to pre-scan
+/// for total width before rendering.
+fn render_line_direct<'a>(
+    graphemes: impl Iterator<Item = StyledGrapheme<'a>>,
+    row: &mut [Cell],
+    max_width: u16,
+    alignment: Alignment,
+) {
+    if alignment == Alignment::Left {
+        // Single-pass: render directly as we iterate
+        let mut x = 0usize;
+        for StyledGrapheme { symbol, style } in graphemes {
+            let width = symbol.cell_width();
+            if width == 0 {
+                continue;
+            }
+            if width > max_width {
+                continue;
+            }
+            if x as u16 + width > max_width {
+                break;
+            }
+            let symbol = if symbol.is_empty() { " " } else { symbol };
+            row[x].set_symbol(symbol).set_style(style);
+            x += width as usize;
+        }
+    } else {
+        // Two-pass: collect truncated graphemes, compute width, then render with offset
+        let mut collected: Vec<(u16, StyledGrapheme<'a>)> = Vec::new();
+        let mut line_width = 0u16;
+        for g in graphemes {
+            let w = g.symbol.cell_width();
+            if w == 0 || w > max_width {
+                continue;
+            }
+            if line_width + w > max_width {
+                break;
+            }
+            line_width += w;
+            collected.push((w, g));
+        }
+        let mut x = get_line_offset(line_width, max_width, alignment) as usize;
+        for (width, StyledGrapheme { symbol, style }) in collected {
+            let symbol = if symbol.is_empty() { " " } else { symbol };
+            row[x].set_symbol(symbol).set_style(style);
+            x += width as usize;
+        }
     }
 }
 
