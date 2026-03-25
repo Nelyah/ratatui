@@ -231,13 +231,15 @@ where
         #[cfg(feature = "underline-color")]
         let mut underline_color = Color::Reset;
         let mut modifier = Modifier::empty();
-        let mut last_pos: Option<Position> = None;
+        let mut last_x: u16 = u16::MAX;
+        let mut last_y: u16 = u16::MAX;
         for (x, y, cell) in content {
             // Move the cursor if the previous location was not (x - 1, y)
-            if !matches!(last_pos, Some(p) if x == p.x + 1 && y == p.y) {
+            if x != last_x.wrapping_add(1) || y != last_y {
                 queue!(self.writer, MoveTo(x, y))?;
             }
-            last_pos = Some(Position { x, y });
+            last_x = x;
+            last_y = y;
             if cell.modifier != modifier {
                 let diff = ModifierDiff {
                     from: modifier,
@@ -264,7 +266,8 @@ where
                 underline_color = cell.underline_color;
             }
 
-            queue!(self.writer, Print(cell.symbol()))?;
+            // Write symbol directly, bypassing crossterm's Print command formatting
+            self.writer.write_all(cell.symbol().as_bytes())?;
         }
 
         #[cfg(feature = "underline-color")]
@@ -531,74 +534,76 @@ struct ModifierDiff {
 }
 
 impl ModifierDiff {
+    /// Write ANSI escape sequences directly for modifier changes, bypassing crossterm's
+    /// Command formatting overhead.
     fn queue<W>(self, mut w: W) -> io::Result<()>
     where
         W: io::Write,
     {
         let removed = self.from - self.to;
         if removed.contains(Modifier::REVERSED) {
-            queue!(w, SetAttribute(CrosstermAttribute::NoReverse))?;
+            w.write_all(b"\x1b[27m")?; // NoReverse
         }
 
         let reset_intensity = removed.contains(Modifier::BOLD) || removed.contains(Modifier::DIM);
         if reset_intensity {
             // Bold and Dim are both reset by applying the Normal intensity
-            queue!(w, SetAttribute(CrosstermAttribute::NormalIntensity))?;
+            w.write_all(b"\x1b[22m")?; // NormalIntensity
 
             // The remaining Bold and Dim attributes must be
             // reapplied after the intensity reset above.
             if self.to.contains(Modifier::DIM) {
-                queue!(w, SetAttribute(CrosstermAttribute::Dim))?;
+                w.write_all(b"\x1b[2m")?; // Dim
             }
 
             if self.to.contains(Modifier::BOLD) {
-                queue!(w, SetAttribute(CrosstermAttribute::Bold))?;
+                w.write_all(b"\x1b[1m")?; // Bold
             }
         }
 
         if removed.contains(Modifier::ITALIC) {
-            queue!(w, SetAttribute(CrosstermAttribute::NoItalic))?;
+            w.write_all(b"\x1b[23m")?; // NoItalic
         }
         if removed.contains(Modifier::UNDERLINED) {
-            queue!(w, SetAttribute(CrosstermAttribute::NoUnderline))?;
+            w.write_all(b"\x1b[24m")?; // NoUnderline
         }
         if removed.contains(Modifier::CROSSED_OUT) {
-            queue!(w, SetAttribute(CrosstermAttribute::NotCrossedOut))?;
+            w.write_all(b"\x1b[29m")?; // NotCrossedOut
         }
         if removed.contains(Modifier::HIDDEN) {
-            queue!(w, SetAttribute(CrosstermAttribute::NoHidden))?;
+            w.write_all(b"\x1b[28m")?; // NoHidden
         }
         if removed.contains(Modifier::SLOW_BLINK) || removed.contains(Modifier::RAPID_BLINK) {
-            queue!(w, SetAttribute(CrosstermAttribute::NoBlink))?;
+            w.write_all(b"\x1b[25m")?; // NoBlink
         }
 
         let added = self.to - self.from;
         if added.contains(Modifier::REVERSED) {
-            queue!(w, SetAttribute(CrosstermAttribute::Reverse))?;
+            w.write_all(b"\x1b[7m")?; // Reverse
         }
         if added.contains(Modifier::BOLD) && !reset_intensity {
-            queue!(w, SetAttribute(CrosstermAttribute::Bold))?;
+            w.write_all(b"\x1b[1m")?; // Bold
         }
         if added.contains(Modifier::ITALIC) {
-            queue!(w, SetAttribute(CrosstermAttribute::Italic))?;
+            w.write_all(b"\x1b[3m")?; // Italic
         }
         if added.contains(Modifier::UNDERLINED) {
-            queue!(w, SetAttribute(CrosstermAttribute::Underlined))?;
+            w.write_all(b"\x1b[4m")?; // Underlined
         }
         if added.contains(Modifier::DIM) && !reset_intensity {
-            queue!(w, SetAttribute(CrosstermAttribute::Dim))?;
+            w.write_all(b"\x1b[2m")?; // Dim
         }
         if added.contains(Modifier::CROSSED_OUT) {
-            queue!(w, SetAttribute(CrosstermAttribute::CrossedOut))?;
+            w.write_all(b"\x1b[9m")?; // CrossedOut
         }
         if added.contains(Modifier::HIDDEN) {
-            queue!(w, SetAttribute(CrosstermAttribute::Hidden))?;
+            w.write_all(b"\x1b[8m")?; // Hidden
         }
         if added.contains(Modifier::SLOW_BLINK) {
-            queue!(w, SetAttribute(CrosstermAttribute::SlowBlink))?;
+            w.write_all(b"\x1b[5m")?; // SlowBlink
         }
         if added.contains(Modifier::RAPID_BLINK) {
-            queue!(w, SetAttribute(CrosstermAttribute::RapidBlink))?;
+            w.write_all(b"\x1b[6m")?; // RapidBlink
         }
 
         Ok(())
