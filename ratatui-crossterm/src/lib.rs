@@ -249,13 +249,8 @@ where
                 modifier = cell.modifier;
             }
             if cell.fg != fg || cell.bg != bg {
-                queue!(
-                    self.writer,
-                    SetColors(CrosstermColors::new(
-                        cell.fg.into_crossterm(),
-                        cell.bg.into_crossterm(),
-                    ))
-                )?;
+                write_fg_ansi(&mut self.writer, cell.fg)?;
+                write_bg_ansi(&mut self.writer, cell.bg)?;
                 fg = cell.fg;
                 bg = cell.bg;
             }
@@ -522,6 +517,56 @@ impl FromCrossterm<CrosstermColor> for Color {
             CrosstermColor::Rgb { r, g, b } => Self::Rgb(r, g, b),
             CrosstermColor::AnsiValue(v) => Self::Indexed(v),
         }
+    }
+}
+
+/// Write ANSI foreground color escape sequence directly, bypassing crossterm formatting.
+fn write_fg_ansi<W: io::Write>(w: &mut W, color: Color) -> io::Result<()> {
+    match color {
+        Color::Reset => w.write_all(b"\x1b[39m"),
+        Color::Black => w.write_all(b"\x1b[30m"),
+        Color::Red => w.write_all(b"\x1b[31m"),
+        Color::Green => w.write_all(b"\x1b[32m"),
+        Color::Yellow => w.write_all(b"\x1b[33m"),
+        Color::Blue => w.write_all(b"\x1b[34m"),
+        Color::Magenta => w.write_all(b"\x1b[35m"),
+        Color::Cyan => w.write_all(b"\x1b[36m"),
+        Color::Gray => w.write_all(b"\x1b[37m"),
+        Color::DarkGray => w.write_all(b"\x1b[90m"),
+        Color::LightRed => w.write_all(b"\x1b[91m"),
+        Color::LightGreen => w.write_all(b"\x1b[92m"),
+        Color::LightYellow => w.write_all(b"\x1b[93m"),
+        Color::LightBlue => w.write_all(b"\x1b[94m"),
+        Color::LightMagenta => w.write_all(b"\x1b[95m"),
+        Color::LightCyan => w.write_all(b"\x1b[96m"),
+        Color::White => w.write_all(b"\x1b[97m"),
+        Color::Indexed(i) => write!(w, "\x1b[38;5;{i}m"),
+        Color::Rgb(r, g, b) => write!(w, "\x1b[38;2;{r};{g};{b}m"),
+    }
+}
+
+/// Write ANSI background color escape sequence directly, bypassing crossterm formatting.
+fn write_bg_ansi<W: io::Write>(w: &mut W, color: Color) -> io::Result<()> {
+    match color {
+        Color::Reset => w.write_all(b"\x1b[49m"),
+        Color::Black => w.write_all(b"\x1b[40m"),
+        Color::Red => w.write_all(b"\x1b[41m"),
+        Color::Green => w.write_all(b"\x1b[42m"),
+        Color::Yellow => w.write_all(b"\x1b[43m"),
+        Color::Blue => w.write_all(b"\x1b[44m"),
+        Color::Magenta => w.write_all(b"\x1b[45m"),
+        Color::Cyan => w.write_all(b"\x1b[46m"),
+        Color::Gray => w.write_all(b"\x1b[47m"),
+        Color::DarkGray => w.write_all(b"\x1b[100m"),
+        Color::LightRed => w.write_all(b"\x1b[101m"),
+        Color::LightGreen => w.write_all(b"\x1b[102m"),
+        Color::LightYellow => w.write_all(b"\x1b[103m"),
+        Color::LightBlue => w.write_all(b"\x1b[104m"),
+        Color::LightMagenta => w.write_all(b"\x1b[105m"),
+        Color::LightCyan => w.write_all(b"\x1b[106m"),
+        Color::White => w.write_all(b"\x1b[107m"),
+        Color::Indexed(i) => write!(w, "\x1b[48;5;{i}m"),
+        Color::Rgb(r, g, b) => write!(w, "\x1b[48;2;{r};{g};{b}m"),
     }
 }
 
