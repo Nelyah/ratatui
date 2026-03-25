@@ -1,0 +1,18 @@
+{
+  "name": "bive",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "initializeCommand": "command -v security >/dev/null && security find-generic-password -s 'Claude Code-credentials' -w > ~/.claude/.credentials.json || true",
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "mounts": [
+    "source=${localEnv:HOME}/.cache/claude,target=/home/vscode/.cache/claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.local/share/claude,target=/home/vscode/.local/share/claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.gitconfig,target=/home/vscode/.gitconfig,type=bind,consistency=cached"
+  ],
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true
+}
