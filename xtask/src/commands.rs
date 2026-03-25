@@ -92,6 +92,10 @@ pub enum Command {
     /// Run cargo hack to test each feature in isolation
     #[command(visible_alias = "h")]
     Hack,
+
+    /// Run tests and benchmarks
+    #[command(visible_alias = "perf")]
+    Bench,
 }
 
 impl Run for Command {
@@ -114,6 +118,7 @@ impl Run for Command {
             Command::TestDocs => test_docs::test_docs(),
             Command::TestLibs => test_libs(),
             Command::Hack => hack(),
+            Command::Bench => run_bench(),
         }
     }
 }
@@ -196,4 +201,10 @@ fn hack() -> Result<()> {
         "--each-feature",
         "--workspace",
     ])
+}
+
+/// Run tests and then benchmarks
+fn run_bench() -> Result<()> {
+    run_cargo(vec!["test", "--lib", "-p", "ratatui"])?;
+    run_cargo(vec!["bench", "--bench", "main", "-p", "ratatui"])
 }
