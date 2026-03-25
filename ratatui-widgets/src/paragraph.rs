@@ -472,6 +472,7 @@ impl Paragraph<'_> {
                             break;
                         }
                         let style = line_style.patch(span.style);
+                        let has_style = style != Style::new();
                         let content = span.content.as_ref();
                         if content.is_ascii() {
                             // ASCII fast path: each byte is a grapheme with width 1
@@ -484,7 +485,10 @@ impl Paragraph<'_> {
                                 }
                                 // Safe: content is ASCII, so byte boundary i..i+1 is valid
                                 #[expect(clippy::string_slice)]
-                                row[x].set_symbol(&content[i..i + 1]).set_style(style);
+                                let cell = row[x].set_symbol(&content[i..i + 1]);
+                                if has_style {
+                                    cell.set_style(style);
+                                }
                                 x += 1;
                             }
                         } else {
@@ -503,7 +507,10 @@ impl Paragraph<'_> {
                                     break;
                                 }
                                 let symbol = if grapheme.is_empty() { " " } else { grapheme };
-                                row[x].set_symbol(symbol).set_style(style);
+                                let cell = row[x].set_symbol(symbol);
+                                if has_style {
+                                    cell.set_style(style);
+                                }
                                 x += width as usize;
                             }
                         }
