@@ -718,18 +718,26 @@ impl Line<'_> {
         parent_alignment: Option<Alignment>,
     ) {
         let area = area.intersection(buf.area);
-        if area.is_empty() {
+        if area.is_empty() || self.spans.is_empty() {
             return;
         }
         let area = Rect { height: 1, ..area };
-        let line_width = self.width();
-        if line_width == 0 {
-            return;
-        }
 
         buf.set_style(area, self.style);
 
         let alignment = self.alignment.or(parent_alignment);
+
+        // Fast path for left-aligned text: skip the expensive width() computation since
+        // left-aligned text always starts at x=0 with no indentation or skip.
+        if matches!(alignment, Some(Alignment::Left) | None) {
+            render_spans(&self.spans, area, buf, 0);
+            return;
+        }
+
+        let line_width = self.width();
+        if line_width == 0 {
+            return;
+        }
 
         let area_width = usize::from(area.width);
         let can_render_complete_line = line_width <= area_width;
@@ -737,7 +745,7 @@ impl Line<'_> {
             let indent_width = match alignment {
                 Some(Alignment::Center) => (area_width.saturating_sub(line_width)) / 2,
                 Some(Alignment::Right) => area_width.saturating_sub(line_width),
-                Some(Alignment::Left) | None => 0,
+                Some(Alignment::Left) | None => unreachable!(),
             };
             let indent_width = u16::try_from(indent_width).unwrap_or(u16::MAX);
             let area = area.indent_x(indent_width);
@@ -748,7 +756,7 @@ impl Line<'_> {
             let skip_width = match alignment {
                 Some(Alignment::Center) => (line_width.saturating_sub(area_width)) / 2,
                 Some(Alignment::Right) => line_width.saturating_sub(area_width),
-                Some(Alignment::Left) | None => 0,
+                Some(Alignment::Left) | None => unreachable!(),
             };
             render_spans(&self.spans, area, buf, skip_width);
         }
