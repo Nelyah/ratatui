@@ -345,9 +345,37 @@ impl Buffer {
         T: AsRef<str>,
         S: Into<Style>,
     {
+        let style = style.into();
+        let content = string.as_ref();
         let max_width = max_width.try_into().unwrap_or(u16::MAX);
-        let mut remaining_width = self.area.right().saturating_sub(x).min(max_width);
-        let graphemes = UnicodeSegmentation::graphemes(string.as_ref(), true)
+        let remaining_width = self.area.right().saturating_sub(x).min(max_width) as usize;
+
+        // ASCII fast path: skip unicode segmentation, use row-level buffer access
+        if content.is_ascii() {
+            let row_start = self.index_of(x, y);
+            let cells = &mut self.content[row_start..];
+            let has_style = style != Style::new();
+            let mut cx = 0usize;
+            for (i, &byte) in content.as_bytes().iter().enumerate() {
+                if cx >= remaining_width {
+                    break;
+                }
+                if byte < 0x20 || byte == 0x7f {
+                    continue;
+                }
+                #[expect(clippy::string_slice)]
+                let cell = cells[cx].set_symbol(&content[i..i + 1]);
+                if has_style {
+                    cell.set_style(style);
+                }
+                cx += 1;
+            }
+            return (x + cx as u16, y);
+        }
+
+        // Unicode path: full grapheme segmentation
+        let mut remaining_width = remaining_width as u16;
+        let graphemes = UnicodeSegmentation::graphemes(content, true)
             .filter(|symbol| !symbol.contains(char::is_control))
             .map(|symbol| (symbol, symbol.cell_width()))
             .filter(|(_symbol, width)| *width > 0)
@@ -355,7 +383,6 @@ impl Buffer {
                 remaining_width = remaining_width.checked_sub(width)?;
                 Some((symbol, width))
             });
-        let style = style.into();
         for (symbol, width) in graphemes {
             self[(x, y)].set_symbol(symbol).set_style(style);
             let next_symbol = x + width;
