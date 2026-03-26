@@ -765,6 +765,26 @@ impl Line<'_> {
 
 /// Renders all the spans of the line that should be visible.
 fn render_spans(spans: &[Span], mut area: Rect, buf: &mut Buffer, span_skip_width: usize) {
+    if span_skip_width == 0 {
+        // Fast path: no skip needed, render spans directly.
+        if spans.len() == 1 {
+            // Single span (most common): render directly, no width tracking needed.
+            if !area.is_empty() {
+                (&spans[0]).render(area, buf);
+            }
+            return;
+        }
+        // Multi-span: render each and advance area.
+        for span in spans {
+            if area.is_empty() {
+                break;
+            }
+            span.render(area, buf);
+            let w = u16::try_from(span.width()).unwrap_or(u16::MAX).min(area.width);
+            area = area.indent_x(w);
+        }
+        return;
+    }
     for (span, span_width, offset) in spans_after_width(spans, span_skip_width) {
         area = area.indent_x(offset);
         if area.is_empty() {
