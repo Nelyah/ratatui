@@ -886,7 +886,7 @@ impl Table<'_> {
             if selection_width > 0 && is_selected {
                 self.set_selection_style(buf, selection_width, row_area, row);
             }
-            self.render_row_cells(buf, columns_widths.iter().collect(), &row.cells, row_area);
+            self.render_row_cells(buf, &columns_widths, &row.cells, row_area);
             if is_selected {
                 selected_row_area = Some(row_area);
             }
@@ -928,11 +928,11 @@ impl Table<'_> {
     fn render_row_cells(
         &self,
         buf: &mut Buffer,
-        column_widths: Vec<&Rect>,
-        cells: &Vec<Cell>,
+        column_widths: &[Rect],
+        cells: &[Cell],
         row_area: Rect,
     ) {
-        let mut column_widths_iterator = column_widths.into_iter();
+        let mut column_widths_iterator = column_widths.iter();
         for current_cell in cells {
             if let Some(cell_area) = Self::get_cell_area(
                 &mut column_widths_iterator,

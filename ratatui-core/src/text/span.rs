@@ -435,7 +435,7 @@ impl Widget for &Span<'_> {
         // ASCII fast path: each byte is a single-width grapheme, no zero-width or multi-width
         // characters, so we can skip unicode segmentation and special-case handling entirely.
         if content.is_ascii() {
-            let style = Style::default().patch(self.style);
+            let style = self.style;
             let has_style = style != Style::new();
             let row_start = buf.index_of(area.x, area.y);
             let max_cells = area.width as usize;
