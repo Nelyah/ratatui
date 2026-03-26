@@ -26,7 +26,7 @@ pub enum CellDiffOption {
 }
 
 /// A buffer cell
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Cell {
     /// The string to be drawn in the cell.
@@ -34,10 +34,10 @@ pub struct Cell {
     /// This accepts unicode grapheme clusters which might take up more than one cell.
     ///
     /// This is a [`CompactString`] which is a wrapper around [`String`] that uses a small inline
-    /// buffer for short strings.
+    /// buffer for short strings. Empty cells use `" "` (space) as the symbol.
     ///
     /// See <https://github.com/ratatui/ratatui/pull/601> for more information.
-    symbol: Option<CompactString>,
+    symbol: CompactString,
 
     /// The foreground color of the cell.
     pub fg: Color,
@@ -56,10 +56,16 @@ pub struct Cell {
     pub diff_option: CellDiffOption,
 }
 
+impl Default for Cell {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
 impl Cell {
     /// An empty `Cell`
     pub const EMPTY: Self = Self {
-        symbol: None,
+        symbol: CompactString::const_new(""),
         fg: Color::Reset,
         bg: Color::Reset,
         #[cfg(feature = "underline-color")]
@@ -76,17 +82,24 @@ impl Cell {
     /// details on this.
     pub const fn new(symbol: &'static str) -> Self {
         Self {
-            symbol: Some(CompactString::const_new(symbol)),
-            ..Self::EMPTY
+            symbol: CompactString::const_new(symbol),
+            fg: Color::Reset,
+            bg: Color::Reset,
+            #[cfg(feature = "underline-color")]
+            underline_color: Color::Reset,
+            modifier: Modifier::empty(),
+            diff_option: CellDiffOption::None,
         }
     }
 
     /// Gets the symbol of the cell.
     ///
-    /// If the cell has no symbol, returns a single space character.
+    /// Returns `" "` (space) for cells that haven't been written to.
+    #[inline]
     #[must_use]
     pub fn symbol(&self) -> &str {
-        self.symbol.as_ref().map_or(" ", |s| s.as_str())
+        let s = self.symbol.as_str();
+        if s.is_empty() { " " } else { s }
     }
 
     /// Merges the symbol of the cell with the one already on the cell, using the provided
@@ -127,17 +140,21 @@ impl Cell {
     /// [border collapsing]: https://ratatui.rs/recipes/layout/collapse-borders/
     /// [Box Drawing Unicode block]: https://en.wikipedia.org/wiki/Box_Drawing
     pub fn merge_symbol(&mut self, symbol: &str, strategy: MergeStrategy) -> &mut Self {
-        let merged_symbol = self
-            .symbol
-            .as_ref()
-            .map_or(symbol, |s| strategy.merge(s, symbol));
-        self.symbol = Some(CompactString::new(merged_symbol));
+        // If the cell hasn't been written to (empty sentinel), set the symbol directly
+        // without merging — there's nothing to merge with.
+        if self.symbol.is_empty() {
+            self.symbol = CompactString::new(symbol);
+        } else {
+            let merged = strategy.merge(self.symbol.as_str(), symbol);
+            self.symbol = CompactString::new(merged);
+        }
         self
     }
 
     /// Sets the symbol of the cell.
+    #[inline]
     pub fn set_symbol(&mut self, symbol: &str) -> &mut Self {
-        self.symbol = Some(CompactString::new(symbol));
+        self.symbol = CompactString::new(symbol);
         self
     }
 
@@ -145,14 +162,14 @@ impl Cell {
     ///
     /// This is particularly useful for adding zero-width characters to the cell.
     pub(crate) fn append_symbol(&mut self, symbol: &str) -> &mut Self {
-        self.symbol.get_or_insert_default().push_str(symbol);
+        self.symbol.push_str(symbol);
         self
     }
 
     /// Sets the symbol of the cell to a single character.
     pub fn set_char(&mut self, ch: char) -> &mut Self {
         let mut buf = [0; 4];
-        self.symbol = Some(CompactString::new(ch.encode_utf8(&mut buf)));
+        self.symbol = CompactString::new(ch.encode_utf8(&mut buf));
         self
     }
 
@@ -232,13 +249,8 @@ impl Cell {
 }
 
 impl PartialEq for Cell {
-    /// Compares two `Cell`s for equality.
-    ///
-    /// Note that cells with no symbol (i.e., `Cell::EMPTY`) are considered equal to cells with a
-    /// single space symbol. This is to ensure that empty cells are treated uniformly,
-    /// regardless of how they were created
     fn eq(&self, other: &Self) -> bool {
-        // Treat None and Some(" ") as equal
+        // Use symbol() which normalizes "" to " " for comparison
         let symbols_eq = self.symbol() == other.symbol();
 
         #[cfg(feature = "underline-color")]
@@ -258,12 +270,8 @@ impl PartialEq for Cell {
 impl Eq for Cell {}
 
 impl core::hash::Hash for Cell {
-    /// Hashes the cell.
-    ///
-    /// This treats symbols with Some(" ") as equal to None, so that empty cells are
-    /// treated uniformly, regardless of how they were created.
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.symbol().hash(state);
+        self.symbol.as_str().hash(state);
         self.fg.hash(state);
         self.bg.hash(state);
         #[cfg(feature = "underline-color")]
@@ -302,7 +310,7 @@ mod tests {
         assert_eq!(
             cell,
             Cell {
-                symbol: Some(CompactString::const_new("あ")),
+                symbol: CompactString::new("あ"),
                 fg: Color::Reset,
                 bg: Color::Reset,
                 #[cfg(feature = "underline-color")]
