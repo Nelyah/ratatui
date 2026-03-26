@@ -559,14 +559,14 @@ impl Paragraph<'_> {
 
 /// Count how many wrapped output lines a single input line produces.
 ///
-/// This replicates the core word-wrapping width logic of [`WordWrapper::process_input`] but
-/// only tracks widths — no grapheme buffering, no Vec allocation. Used to efficiently skip
-/// input lines during scroll without full grapheme processing.
+/// Replicates the word-wrapping width logic of [`WordWrapper::process_input`] but only tracks
+/// widths — no grapheme buffering, no Vec allocation. For ASCII content with unit-width
+/// whitespace, avoids all heap allocation by using a simple counter instead of VecDeque.
 fn count_wrapped_lines_for_line(
     line: &ratatui_core::text::Line<'_>,
     max_width: u16,
     trim: bool,
-    base_style: Style,
+    _base_style: Style,
 ) -> usize {
     if max_width == 0 {
         return 0;
@@ -576,142 +576,134 @@ fn count_wrapped_lines_for_line(
     let mut line_width: u16 = 0;
     let mut word_width: u16 = 0;
     let mut whitespace_width: u16 = 0;
-    let mut non_whitespace_previous = false;
-    let mut pending_line_empty = true;
-    // Track individual whitespace widths for the drain logic
-    let mut ws_widths: alloc::collections::VecDeque<u16> = alloc::collections::VecDeque::new();
+    let mut whitespace_count: u16 = 0; // for ASCII: all whitespace is width 1
+    let mut non_ws_prev = false;
+    let mut pending_empty = true;
 
-    let style = base_style.patch(line.style);
     for span in line.iter() {
-        let _span_style = style.patch(span.style);
         let content = span.content.as_ref();
 
-        // Use byte iteration for ASCII, grapheme segmentation for non-ASCII
         if content.is_ascii() {
+            // ASCII fast path: all chars are width 1, whitespace is width 1
             for &byte in content.as_bytes() {
                 if byte < 0x20 || byte == 0x7f {
-                    continue; // control chars
+                    continue;
                 }
-                let symbol_width: u16 = 1;
-                let is_whitespace = byte == b' ' || byte == b'\t';
+                let is_ws = byte == b' ' || byte == b'\t';
 
-                count += process_grapheme_for_count(
-                    symbol_width,
-                    is_whitespace,
-                    max_width,
-                    trim,
-                    &mut line_width,
-                    &mut word_width,
-                    &mut whitespace_width,
-                    &mut non_whitespace_previous,
-                    &mut pending_line_empty,
-                    &mut ws_widths,
-                );
+                // Commit word segment on word boundary or overflow
+                let word_found = non_ws_prev && is_ws;
+                let overflow = pending_empty
+                    && ((trim && (word_width + 1 > max_width || whitespace_width + 1 > max_width))
+                        || (!trim && word_width + whitespace_width + 1 > max_width));
+
+                if word_found || overflow {
+                    if !pending_empty || !trim {
+                        line_width += whitespace_width;
+                    }
+                    line_width += word_width;
+                    pending_empty = false;
+                    whitespace_width = 0;
+                    whitespace_count = 0;
+                    word_width = 0;
+                }
+
+                // Check for line break
+                if line_width >= max_width
+                    || (line_width + whitespace_width + word_width >= max_width)
+                {
+                    let remaining = max_width.saturating_sub(line_width);
+                    count += 1;
+                    line_width = 0;
+                    pending_empty = true;
+
+                    // Drain whitespace (each width 1 for ASCII)
+                    let drain = remaining.min(whitespace_count);
+                    whitespace_width -= drain;
+                    whitespace_count -= drain;
+
+                    if is_ws && whitespace_count == 0 {
+                        non_ws_prev = false;
+                        continue;
+                    }
+                }
+
+                if is_ws {
+                    whitespace_width += 1;
+                    whitespace_count += 1;
+                } else {
+                    word_width += 1;
+                }
+                non_ws_prev = !is_ws;
             }
         } else {
+            // Unicode fallback: use VecDeque for variable-width whitespace
+            let mut ws_widths: alloc::collections::VecDeque<u16> =
+                alloc::collections::VecDeque::new();
             for grapheme in
                 unicode_segmentation::UnicodeSegmentation::graphemes(content, true)
             {
                 if grapheme.contains(char::is_control) {
                     continue;
                 }
-                let symbol_width = grapheme.cell_width();
-                let is_whitespace = grapheme.chars().all(|c| c.is_whitespace());
+                let sw = grapheme.cell_width();
+                if sw > max_width {
+                    continue;
+                }
+                let is_ws = grapheme.chars().all(|c| c.is_whitespace());
 
-                count += process_grapheme_for_count(
-                    symbol_width,
-                    is_whitespace,
-                    max_width,
-                    trim,
-                    &mut line_width,
-                    &mut word_width,
-                    &mut whitespace_width,
-                    &mut non_whitespace_previous,
-                    &mut pending_line_empty,
-                    &mut ws_widths,
-                );
+                let word_found = non_ws_prev && is_ws;
+                let overflow = pending_empty
+                    && ((trim && (word_width + sw > max_width || whitespace_width + sw > max_width))
+                        || (!trim && word_width + whitespace_width + sw > max_width));
+
+                if word_found || overflow {
+                    if !pending_empty || !trim {
+                        line_width += whitespace_width;
+                    }
+                    line_width += word_width;
+                    pending_empty = false;
+                    ws_widths.clear();
+                    whitespace_width = 0;
+                    word_width = 0;
+                }
+
+                if line_width >= max_width
+                    || (sw > 0 && line_width + whitespace_width + word_width >= max_width)
+                {
+                    let mut remaining = max_width.saturating_sub(line_width);
+                    count += 1;
+                    line_width = 0;
+                    pending_empty = true;
+
+                    while let Some(&w) = ws_widths.front() {
+                        if w > remaining {
+                            break;
+                        }
+                        whitespace_width -= w;
+                        remaining -= w;
+                        ws_widths.pop_front();
+                    }
+
+                    if is_ws && ws_widths.is_empty() {
+                        non_ws_prev = !is_ws;
+                        continue;
+                    }
+                }
+
+                if is_ws {
+                    whitespace_width += sw;
+                    ws_widths.push_back(sw);
+                } else {
+                    word_width += sw;
+                }
+                non_ws_prev = !is_ws;
             }
         }
     }
 
-    // Always at least 1 output line per input line (matching process_input behavior)
+    // Always at least 1 output line per input line
     count + 1
-}
-
-/// Process a single grapheme for wrapped line counting, matching WordWrapper::process_input logic.
-/// Returns 1 if a line break was emitted, 0 otherwise.
-#[inline]
-fn process_grapheme_for_count(
-    symbol_width: u16,
-    is_whitespace: bool,
-    max_width: u16,
-    trim: bool,
-    line_width: &mut u16,
-    word_width: &mut u16,
-    whitespace_width: &mut u16,
-    non_whitespace_previous: &mut bool,
-    pending_line_empty: &mut bool,
-    ws_widths: &mut alloc::collections::VecDeque<u16>,
-) -> usize {
-    if symbol_width > max_width {
-        return 0;
-    }
-
-    let word_found = *non_whitespace_previous && is_whitespace;
-    let trimmed_overflow =
-        *pending_line_empty && trim && *word_width + symbol_width > max_width;
-    let whitespace_overflow =
-        *pending_line_empty && trim && *whitespace_width + symbol_width > max_width;
-    let untrimmed_overflow = *pending_line_empty
-        && !trim
-        && *word_width + *whitespace_width + symbol_width > max_width;
-
-    if word_found || trimmed_overflow || whitespace_overflow || untrimmed_overflow {
-        if !*pending_line_empty || !trim {
-            *line_width += *whitespace_width;
-        }
-        *line_width += *word_width;
-        *pending_line_empty = false;
-        ws_widths.clear();
-        *whitespace_width = 0;
-        *word_width = 0;
-    }
-
-    let line_full = *line_width >= max_width;
-    let pending_word_overflow =
-        symbol_width > 0 && *line_width + *whitespace_width + *word_width >= max_width;
-
-    let mut emitted = 0;
-    if line_full || pending_word_overflow {
-        let mut remaining_width = max_width.saturating_sub(*line_width);
-        emitted = 1;
-        *line_width = 0;
-        *pending_line_empty = true;
-
-        // Drain whitespace fitting remaining width
-        while let Some(&w) = ws_widths.front() {
-            if w > remaining_width {
-                break;
-            }
-            *whitespace_width -= w;
-            remaining_width -= w;
-            ws_widths.pop_front();
-        }
-
-        if is_whitespace && ws_widths.is_empty() {
-            *non_whitespace_previous = !is_whitespace;
-            return emitted;
-        }
-    }
-
-    if is_whitespace {
-        *whitespace_width += symbol_width;
-        ws_widths.push_back(symbol_width);
-    } else {
-        *word_width += symbol_width;
-    }
-    *non_whitespace_previous = !is_whitespace;
-    emitted
 }
 
 fn render_lines<'a, C: LineComposer<'a>>(mut composer: C, area: Rect, buf: &mut Buffer) {
