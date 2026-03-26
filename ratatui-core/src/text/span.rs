@@ -427,6 +427,39 @@ impl Widget for &Span<'_> {
         if area.is_empty() {
             return;
         }
+        let content = self.content.as_ref();
+        if content.is_empty() {
+            return;
+        }
+
+        // ASCII fast path: each byte is a single-width grapheme, no zero-width or multi-width
+        // characters, so we can skip unicode segmentation and special-case handling entirely.
+        if content.is_ascii() {
+            let style = Style::default().patch(self.style);
+            let has_style = style != Style::new();
+            let row_start = buf.index_of(area.x, area.y);
+            let max_cells = area.width as usize;
+            let cells = &mut buf.content[row_start..row_start + max_cells];
+            let mut x = 0usize;
+            for (i, &byte) in content.as_bytes().iter().enumerate() {
+                if x >= max_cells {
+                    break;
+                }
+                if byte < 0x20 || byte == 0x7f {
+                    continue; // skip control chars
+                }
+                // SAFETY justification: content is ASCII, so i..i+1 is a valid char boundary
+                #[expect(clippy::string_slice)]
+                let cell = cells[x].set_symbol(&content[i..i + 1]);
+                if has_style {
+                    cell.set_style(style);
+                }
+                x += 1;
+            }
+            return;
+        }
+
+        // Unicode path: full grapheme segmentation with zero-width and multi-width handling
         let Rect { mut x, y, .. } = area;
         for (i, grapheme) in self.styled_graphemes(Style::default()).enumerate() {
             let symbol_width = grapheme.symbol.cell_width();
