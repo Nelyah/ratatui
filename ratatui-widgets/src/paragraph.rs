@@ -432,9 +432,35 @@ impl Paragraph<'_> {
         });
 
         if let Some(Wrap { trim }) = self.wrap {
-            let mut line_composer = WordWrapper::new(styled, text_area.width, trim);
-            // compute the lines iteratively until we reach the desired scroll offset.
-            for _ in 0..self.scroll.y {
+            let max_width = text_area.width;
+            let mut skip_remaining = self.scroll.y as usize;
+
+            // Fast scroll skip: count wrapped output lines per input line without full
+            // grapheme processing. Skip entire input lines whose output fits before the
+            // scroll position, avoiding the O(n*chars) cost of the WordWrapper.
+            let mut skip_input_lines = 0usize;
+            if skip_remaining > 0 {
+                for line in self.text.iter() {
+                    let n =
+                        count_wrapped_lines_for_line(line, max_width, trim, self.text.style);
+                    if n <= skip_remaining {
+                        skip_remaining -= n;
+                        skip_input_lines += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            // Create styled iterator starting from the first non-fully-skipped line
+            let styled = self.text.iter().skip(skip_input_lines).map(|line| {
+                let graphemes = line.styled_graphemes(self.text.style);
+                let alignment = line.alignment.unwrap_or(self.alignment);
+                (graphemes, alignment)
+            });
+            let mut line_composer = WordWrapper::new(styled, max_width, trim);
+            // Skip remaining output lines within the bridging line
+            for _ in 0..skip_remaining {
                 if line_composer.next_line().is_none() {
                     return;
                 }
@@ -529,6 +555,163 @@ impl Paragraph<'_> {
             render_lines(line_composer, text_area, buf);
         }
     }
+}
+
+/// Count how many wrapped output lines a single input line produces.
+///
+/// This replicates the core word-wrapping width logic of [`WordWrapper::process_input`] but
+/// only tracks widths — no grapheme buffering, no Vec allocation. Used to efficiently skip
+/// input lines during scroll without full grapheme processing.
+fn count_wrapped_lines_for_line(
+    line: &ratatui_core::text::Line<'_>,
+    max_width: u16,
+    trim: bool,
+    base_style: Style,
+) -> usize {
+    if max_width == 0 {
+        return 0;
+    }
+
+    let mut count = 0usize;
+    let mut line_width: u16 = 0;
+    let mut word_width: u16 = 0;
+    let mut whitespace_width: u16 = 0;
+    let mut non_whitespace_previous = false;
+    let mut pending_line_empty = true;
+    // Track individual whitespace widths for the drain logic
+    let mut ws_widths: alloc::collections::VecDeque<u16> = alloc::collections::VecDeque::new();
+
+    let style = base_style.patch(line.style);
+    for span in line.iter() {
+        let _span_style = style.patch(span.style);
+        let content = span.content.as_ref();
+
+        // Use byte iteration for ASCII, grapheme segmentation for non-ASCII
+        if content.is_ascii() {
+            for &byte in content.as_bytes() {
+                if byte < 0x20 || byte == 0x7f {
+                    continue; // control chars
+                }
+                let symbol_width: u16 = 1;
+                let is_whitespace = byte == b' ' || byte == b'\t';
+
+                count += process_grapheme_for_count(
+                    symbol_width,
+                    is_whitespace,
+                    max_width,
+                    trim,
+                    &mut line_width,
+                    &mut word_width,
+                    &mut whitespace_width,
+                    &mut non_whitespace_previous,
+                    &mut pending_line_empty,
+                    &mut ws_widths,
+                );
+            }
+        } else {
+            for grapheme in
+                unicode_segmentation::UnicodeSegmentation::graphemes(content, true)
+            {
+                if grapheme.contains(char::is_control) {
+                    continue;
+                }
+                let symbol_width = grapheme.cell_width();
+                let is_whitespace = grapheme.chars().all(|c| c.is_whitespace());
+
+                count += process_grapheme_for_count(
+                    symbol_width,
+                    is_whitespace,
+                    max_width,
+                    trim,
+                    &mut line_width,
+                    &mut word_width,
+                    &mut whitespace_width,
+                    &mut non_whitespace_previous,
+                    &mut pending_line_empty,
+                    &mut ws_widths,
+                );
+            }
+        }
+    }
+
+    // Always at least 1 output line per input line (matching process_input behavior)
+    count + 1
+}
+
+/// Process a single grapheme for wrapped line counting, matching WordWrapper::process_input logic.
+/// Returns 1 if a line break was emitted, 0 otherwise.
+#[inline]
+fn process_grapheme_for_count(
+    symbol_width: u16,
+    is_whitespace: bool,
+    max_width: u16,
+    trim: bool,
+    line_width: &mut u16,
+    word_width: &mut u16,
+    whitespace_width: &mut u16,
+    non_whitespace_previous: &mut bool,
+    pending_line_empty: &mut bool,
+    ws_widths: &mut alloc::collections::VecDeque<u16>,
+) -> usize {
+    if symbol_width > max_width {
+        return 0;
+    }
+
+    let word_found = *non_whitespace_previous && is_whitespace;
+    let trimmed_overflow =
+        *pending_line_empty && trim && *word_width + symbol_width > max_width;
+    let whitespace_overflow =
+        *pending_line_empty && trim && *whitespace_width + symbol_width > max_width;
+    let untrimmed_overflow = *pending_line_empty
+        && !trim
+        && *word_width + *whitespace_width + symbol_width > max_width;
+
+    if word_found || trimmed_overflow || whitespace_overflow || untrimmed_overflow {
+        if !*pending_line_empty || !trim {
+            *line_width += *whitespace_width;
+        }
+        *line_width += *word_width;
+        *pending_line_empty = false;
+        ws_widths.clear();
+        *whitespace_width = 0;
+        *word_width = 0;
+    }
+
+    let line_full = *line_width >= max_width;
+    let pending_word_overflow =
+        symbol_width > 0 && *line_width + *whitespace_width + *word_width >= max_width;
+
+    let mut emitted = 0;
+    if line_full || pending_word_overflow {
+        let mut remaining_width = max_width.saturating_sub(*line_width);
+        emitted = 1;
+        *line_width = 0;
+        *pending_line_empty = true;
+
+        // Drain whitespace fitting remaining width
+        while let Some(&w) = ws_widths.front() {
+            if w > remaining_width {
+                break;
+            }
+            *whitespace_width -= w;
+            remaining_width -= w;
+            ws_widths.pop_front();
+        }
+
+        if is_whitespace && ws_widths.is_empty() {
+            *non_whitespace_previous = !is_whitespace;
+            return emitted;
+        }
+    }
+
+    if is_whitespace {
+        *whitespace_width += symbol_width;
+        ws_widths.push_back(symbol_width);
+    } else {
+        *word_width += symbol_width;
+    }
+    *non_whitespace_previous = !is_whitespace;
+    emitted
 }
 
 fn render_lines<'a, C: LineComposer<'a>>(mut composer: C, area: Rect, buf: &mut Buffer) {
