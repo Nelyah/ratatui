@@ -343,20 +343,10 @@ impl<'a> Paragraph<'a> {
             .unwrap_or_default();
 
         let count = if let Some(Wrap { trim }) = self.wrap {
-            let styled = self.text.iter().map(|line| {
-                let graphemes = line
-                    .spans
-                    .iter()
-                    .flat_map(|span| span.styled_graphemes(self.style));
-                let alignment = line.alignment.unwrap_or(self.alignment);
-                (graphemes, alignment)
-            });
-            let mut line_composer = WordWrapper::new(styled, width, trim);
-            let mut count = 0;
-            while line_composer.next_line().is_some() {
-                count += 1;
-            }
-            count
+            self.text
+                .iter()
+                .map(|line| count_wrapped_lines_for_line(line, width, trim, self.style))
+                .sum::<usize>()
         } else {
             self.text.height()
         };
