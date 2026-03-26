@@ -762,13 +762,25 @@ impl StatefulWidget for &Table<'_> {
             state.select(None);
         }
 
-        let column_count = self.column_count();
-        if state.selected_column.is_some_and(|s| s >= column_count) {
-            state.select_column(Some(column_count.saturating_sub(1)));
-        }
-        if column_count == 0 {
-            state.select_column(None);
-        }
+        // Avoid scanning all rows for column_count when possible.
+        // Only compute the full column_count if we need it for column selection clamping.
+        let column_count = if state.selected_column.is_some() {
+            let count = self.column_count();
+            if state.selected_column.is_some_and(|s| s >= count) {
+                state.select_column(Some(count.saturating_sub(1)));
+            }
+            if count == 0 {
+                state.select_column(None);
+            }
+            count
+        } else {
+            // For get_column_widths: use widths.len() if available, otherwise compute
+            if !self.widths.is_empty() {
+                self.widths.len()
+            } else {
+                self.column_count()
+            }
+        };
 
         let selection_width = self.selection_width(state);
         let column_widths = self.get_column_widths(table_area.width, selection_width, column_count);
