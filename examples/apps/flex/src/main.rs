@@ -445,14 +445,17 @@ impl Widget for Example {
             .split_with_spacers(illustrations);
 
         if !self.description.is_empty() {
-            Paragraph::new(
-                self.description
-                    .split('\n')
-                    .map(|s| format!("// {s}").italic().fg(THEME.description_fg))
-                    .map(Line::from)
-                    .collect::<Vec<Line>>(),
-            )
-            .render(title, buf);
+            Widget::render(
+                Paragraph::new(
+                    self.description
+                        .split('\n')
+                        .map(|s| format!("// {s}").italic().fg(THEME.description_fg))
+                        .map(Line::from)
+                        .collect::<Vec<Line>>(),
+                ),
+                title,
+                buf,
+            );
         }
 
         for (block, constraint) in blocks.iter().zip(&self.constraints) {
@@ -483,14 +486,17 @@ impl Example {
                 .border_style(Style::reset().dark_gray())
                 .render(spacer, buf);
         } else {
-            Paragraph::new(Text::from(vec![
-                Line::from(""),
-                Line::from("│"),
-                Line::from("│"),
-                Line::from(""),
-            ]))
-            .style(Style::reset().dark_gray())
-            .render(spacer, buf);
+            Widget::render(
+                Paragraph::new(Text::from(vec![
+                    Line::from(""),
+                    Line::from("│"),
+                    Line::from("│"),
+                    Line::from(""),
+                ]))
+                .style(Style::reset().dark_gray()),
+                spacer,
+                buf,
+            );
         }
         let width = spacer.width;
         let label = if width > 4 {
@@ -505,10 +511,13 @@ impl Example {
             Line::raw(""),
             Line::styled(label, Style::reset().dark_gray()),
         ]);
-        Paragraph::new(text)
-            .style(Style::reset().dark_gray())
-            .alignment(Alignment::Center)
-            .render(spacer, buf);
+        Widget::render(
+            Paragraph::new(text)
+                .style(Style::reset().dark_gray())
+                .alignment(Alignment::Center),
+            spacer,
+            buf,
+        );
     }
 
     fn illustration(constraint: Constraint, width: u16, theme: Theme) -> impl Widget {

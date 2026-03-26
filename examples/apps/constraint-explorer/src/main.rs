@@ -463,12 +463,15 @@ impl ConstraintBlock {
             .border_style(Style::reset().fg(color).reversed())
             .fg(Self::TEXT_COLOR)
             .bg(color);
-        Paragraph::new(label)
-            .centered()
-            .fg(Self::TEXT_COLOR)
-            .bg(color)
-            .block(block)
-            .render(area, buf);
+        Widget::render(
+            Paragraph::new(label)
+                .centered()
+                .fg(Self::TEXT_COLOR)
+                .bg(color)
+                .block(block),
+            area,
+            buf,
+        );
 
         if !self.legend {
             let border_color = if self.selected {

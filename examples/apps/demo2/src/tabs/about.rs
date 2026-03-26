@@ -57,17 +57,20 @@ fn render_crate_description(area: Rect, buf: &mut Buffer) {
 
     Ratatui is a Rust crate that provides widgets (e.g. Paragraph, Table) and draws them to the \
     screen efficiently every frame.";
-    Paragraph::new(text)
-        .style(THEME.description)
-        .block(
-            Block::new()
-                .title(" Ratatui ")
-                .title_alignment(Alignment::Center)
-                .borders(Borders::TOP)
-                .border_style(THEME.description_title)
-                .padding(Padding::new(0, 0, 0, 0)),
-        )
-        .wrap(Wrap { trim: true })
-        .scroll((0, 0))
-        .render(area, buf);
+    Widget::render(
+        Paragraph::new(text)
+            .style(THEME.description)
+            .block(
+                Block::new()
+                    .title(" Ratatui ")
+                    .title_alignment(Alignment::Center)
+                    .borders(Borders::TOP)
+                    .border_style(THEME.description_title)
+                    .padding(Padding::new(0, 0, 0, 0)),
+            )
+            .wrap(Wrap { trim: true })
+            .scroll((0, 0)),
+        area,
+        buf,
+    );
 }

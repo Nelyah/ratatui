@@ -171,15 +171,18 @@ impl App {
             "<{width_label:-^width$}>",
             width = width - width_label.len() / 2
         );
-        Paragraph::new(width_bar.dark_gray())
-            .centered()
-            .block(Block::new().padding(Padding {
-                left: 0,
-                right: 0,
-                top: 1,
-                bottom: 0,
-            }))
-            .render(area, buf);
+        Widget::render(
+            Paragraph::new(width_bar.dark_gray())
+                .centered()
+                .block(Block::new().padding(Padding {
+                    left: 0,
+                    right: 0,
+                    top: 1,
+                    bottom: 0,
+                })),
+            area,
+            buf,
+        );
     }
 
     /// Render the demo content

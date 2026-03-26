@@ -6,7 +6,7 @@ use ratatui_core::buffer::{Buffer, Cell, CellWidth};
 use ratatui_core::layout::{Alignment, Position, Rect};
 use ratatui_core::style::{Style, Styled};
 use ratatui_core::text::{Line, StyledGrapheme, Text};
-use ratatui_core::widgets::Widget;
+use ratatui_core::widgets::{StatefulWidget, Widget};
 
 use crate::block::{Block, BlockExt};
 use crate::reflow::{LineComposer, LineTruncator, WordWrapper, WrappedLine};
@@ -124,6 +124,57 @@ pub struct Paragraph<'a> {
 pub struct Wrap {
     /// Should leading whitespace be trimmed
     pub trim: bool,
+}
+
+/// State for the [`Paragraph`] widget.
+///
+/// This struct persists across frames and caches the wrapped line count so that repeated renders
+/// with unchanged content avoid recomputing it from scratch.
+///
+/// Use with [`StatefulWidget::render`] or [`Paragraph::line_count_with_state`].
+///
+/// # Example
+///
+/// ```ignore
+/// use ratatui::widgets::{Paragraph, ParagraphState, Wrap};
+///
+/// let paragraph = Paragraph::new("Hello world, this is a long line that wraps")
+///     .wrap(Wrap { trim: true });
+/// let mut state = ParagraphState::default();
+///
+/// // First call computes and caches:
+/// let count = paragraph.line_count_with_state(20, &mut state);
+/// // Second call returns cached value:
+/// let count2 = paragraph.line_count_with_state(20, &mut state);
+/// assert_eq!(count, count2);
+/// ```
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct ParagraphState {
+    /// Cached wrapped line count from the most recent render or `line_count_with_state` call.
+    cached_line_count: Option<CachedLineCount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CachedLineCount {
+    width: u16,
+    trim: bool,
+    input_lines: usize,
+    count: usize,
+}
+
+impl ParagraphState {
+    /// Returns the cached line count if available.
+    pub fn line_count(&self) -> Option<usize> {
+        self.cached_line_count.as_ref().map(|c| c.count)
+    }
+
+    /// Clears the cached line count.
+    ///
+    /// Call this when line content is mutated without changing the number of lines, since
+    /// the cache uses line count as a staleness proxy and would not detect such changes.
+    pub fn invalidate(&mut self) {
+        self.cached_line_count = None;
+    }
 }
 
 type Horizontal = u16;
@@ -356,6 +407,39 @@ impl<'a> Paragraph<'a> {
             .saturating_add(bottom as usize)
     }
 
+    /// Like [`line_count`](Self::line_count), but caches the result in the provided state.
+    ///
+    /// On subsequent calls with the same `width`, wrap mode, and number of input lines, returns
+    /// the cached value without recomputing. Call [`ParagraphState::invalidate`] if line content
+    /// changes without changing the number of lines.
+    #[instability::unstable(
+        feature = "rendered-line-info",
+        issue = "https://github.com/ratatui/ratatui/issues/293"
+    )]
+    pub fn line_count_with_state(&self, width: u16, state: &mut ParagraphState) -> usize {
+        if width < 1 {
+            return 0;
+        }
+
+        let trim = self.wrap.map_or(false, |w| w.trim);
+        let input_lines = self.text.iter().count();
+
+        if let Some(ref cached) = state.cached_line_count {
+            if cached.width == width && cached.trim == trim && cached.input_lines == input_lines {
+                return cached.count;
+            }
+        }
+
+        let count = self.line_count(width);
+        state.cached_line_count = Some(CachedLineCount {
+            width,
+            trim,
+            input_lines,
+            count,
+        });
+        count
+    }
+
     /// Calculates the shortest line width needed to avoid any word being wrapped or truncated.
     ///
     /// Accounts for the [`Block`] if a block is set through [`Self::block`].
@@ -399,10 +483,49 @@ impl Widget for Paragraph<'_> {
 
 impl Widget for &Paragraph<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut state = ParagraphState::default();
+        StatefulWidget::render(self, area, buf, &mut state);
+    }
+}
+
+impl StatefulWidget for Paragraph<'_> {
+    type State = ParagraphState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        StatefulWidget::render(&self, area, buf, state);
+    }
+}
+
+impl StatefulWidget for &Paragraph<'_> {
+    type State = ParagraphState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let area = area.intersection(buf.area);
         buf.set_style(area, self.style);
         self.block.as_ref().render(area, buf);
         let inner = self.block.inner_if_some(area);
+
+        // Update cached line count if wrapping is enabled
+        if self.wrap.is_some() && inner.width > 0 {
+            let trim = self.wrap.map_or(false, |w| w.trim);
+            let input_lines = self.text.iter().count();
+            let needs_recompute = state
+                .cached_line_count
+                .as_ref()
+                .map_or(true, |c| {
+                    c.width != inner.width || c.trim != trim || c.input_lines != input_lines
+                });
+            if needs_recompute {
+                let count = self.line_count(inner.width);
+                state.cached_line_count = Some(CachedLineCount {
+                    width: inner.width,
+                    trim,
+                    input_lines,
+                    count,
+                });
+            }
+        }
+
         self.render_paragraph(inner, buf);
     }
 }
@@ -816,7 +939,7 @@ mod tests {
     #[track_caller]
     fn test_case(paragraph: &Paragraph, expected: &Buffer) {
         let mut buffer = Buffer::empty(Rect::new(0, 0, expected.area.width, expected.area.height));
-        paragraph.render(buffer.area, &mut buffer);
+        Widget::render(paragraph, buffer.area, &mut buffer);
         assert_eq!(buffer, *expected);
     }
 
@@ -1508,7 +1631,7 @@ mod tests {
         let paragraph = Paragraph::new(text).block(Block::bordered());
 
         let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
-        paragraph.render(Rect::new(0, 0, 20, 3), &mut buf);
+        Widget::render(paragraph, Rect::new(0, 0, 20, 3), &mut buf);
 
         let mut expected = Buffer::with_lines([
             "┌──────────────────┐",
@@ -1525,14 +1648,14 @@ mod tests {
     #[case::bottom_right(Rect::new(20, 5, 15, 1))]
     fn test_render_paragraph_out_of_bounds(#[case] area: Rect) {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 3));
-        Paragraph::new("Beyond the pale").render(area, &mut buffer);
+        Widget::render(Paragraph::new("Beyond the pale"), area, &mut buffer);
         assert_eq!(buffer, Buffer::with_lines(vec!["          "; 3]));
     }
 
     #[test]
     fn partial_out_of_bounds() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 15, 3));
-        Paragraph::new("Hello World").render(Rect::new(10, 0, 10, 3), &mut buffer);
+        Widget::render(Paragraph::new("Hello World"), Rect::new(10, 0, 10, 3), &mut buffer);
         assert_eq!(
             buffer,
             Buffer::with_lines(vec![
@@ -1548,7 +1671,7 @@ mod tests {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 1, 1));
         let paragraph = Paragraph::new("Lorem ipsum");
         // This should not panic, even if the buffer is too small to render the paragraph.
-        paragraph.render(buffer.area, &mut buffer);
+        Widget::render(paragraph, buffer.area, &mut buffer);
         assert_eq!(buffer, Buffer::with_lines(["L"]));
     }
 
@@ -1557,6 +1680,75 @@ mod tests {
         let mut buffer = Buffer::empty(Rect::ZERO);
         let paragraph = Paragraph::new("Lorem ipsum");
         // This should not panic, even if the buffer has zero size.
-        paragraph.render(buffer.area, &mut buffer);
+        Widget::render(paragraph, buffer.area, &mut buffer);
+    }
+
+    #[test]
+    fn line_count_with_state_caches_on_second_call() {
+        let paragraph = Paragraph::new("Hello world, this is a long line that wraps around")
+            .wrap(Wrap { trim: true });
+        let mut state = ParagraphState::default();
+
+        let count1 = paragraph.line_count_with_state(20, &mut state);
+        assert!(count1 > 1);
+        assert_eq!(state.line_count(), Some(count1));
+
+        // Second call should return cached value
+        let count2 = paragraph.line_count_with_state(20, &mut state);
+        assert_eq!(count1, count2);
+    }
+
+    #[test]
+    fn line_count_with_state_recomputes_on_width_change() {
+        let paragraph = Paragraph::new("Hello world, this is a long line that wraps around")
+            .wrap(Wrap { trim: true });
+        let mut state = ParagraphState::default();
+
+        let count_wide = paragraph.line_count_with_state(50, &mut state);
+        let count_narrow = paragraph.line_count_with_state(10, &mut state);
+        assert!(count_narrow > count_wide);
+    }
+
+    #[test]
+    fn paragraph_state_invalidate_clears_cache() {
+        let paragraph = Paragraph::new("Hello world").wrap(Wrap { trim: true });
+        let mut state = ParagraphState::default();
+
+        paragraph.line_count_with_state(20, &mut state);
+        assert!(state.line_count().is_some());
+
+        state.invalidate();
+        assert!(state.line_count().is_none());
+    }
+
+    #[test]
+    fn stateful_widget_render_populates_cache() {
+        use ratatui_core::widgets::StatefulWidget;
+
+        let paragraph =
+            Paragraph::new("Hello world, this is a long line").wrap(Wrap { trim: true });
+        let mut state = ParagraphState::default();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 15, 5));
+
+        StatefulWidget::render(&paragraph, buffer.area, &mut buffer, &mut state);
+        assert!(state.line_count().is_some());
+    }
+
+    #[test]
+    fn stateful_widget_render_same_output_as_widget() {
+        use ratatui_core::widgets::StatefulWidget;
+
+        let paragraph =
+            Paragraph::new("Hello world, this wraps").wrap(Wrap { trim: true });
+        let area = Rect::new(0, 0, 10, 5);
+
+        let mut buf_widget = Buffer::empty(area);
+        Widget::render(&paragraph, area, &mut buf_widget);
+
+        let mut buf_stateful = Buffer::empty(area);
+        let mut state = ParagraphState::default();
+        StatefulWidget::render(&paragraph, area, &mut buf_stateful, &mut state);
+
+        assert_eq!(buf_widget, buf_stateful);
     }
 }

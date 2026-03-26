@@ -198,16 +198,24 @@ impl Widget for &mut App {
 /// Rendering logic for the app
 impl App {
     fn render_header(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("Ratatui Todo List Example")
-            .bold()
-            .centered()
-            .render(area, buf);
+        Widget::render(
+            Paragraph::new("Ratatui Todo List Example")
+                .bold()
+                .centered(),
+            area,
+            buf,
+        );
     }
 
     fn render_footer(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("Use ↓↑ to move, ← to unselect, → to change status, g/G to go top/bottom.")
-            .centered()
-            .render(area, buf);
+        Widget::render(
+            Paragraph::new(
+                "Use ↓↑ to move, ← to unselect, → to change status, g/G to go top/bottom.",
+            )
+            .centered(),
+            area,
+            buf,
+        );
     }
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
@@ -263,11 +271,14 @@ impl App {
             .padding(Padding::horizontal(1));
 
         // We can now render the item info
-        Paragraph::new(info)
-            .block(block)
-            .fg(TEXT_FG_COLOR)
-            .wrap(Wrap { trim: false })
-            .render(area, buf);
+        Widget::render(
+            Paragraph::new(info)
+                .block(block)
+                .fg(TEXT_FG_COLOR)
+                .wrap(Wrap { trim: false }),
+            area,
+            buf,
+        );
     }
 }
 

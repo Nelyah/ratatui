@@ -119,19 +119,25 @@ impl Widget for &App {
 }
 
 fn render_header(area: Rect, buf: &mut Buffer) {
-    Paragraph::new("Ratatui Gauge Example")
-        .bold()
-        .alignment(Alignment::Center)
-        .fg(CUSTOM_LABEL_COLOR)
-        .render(area, buf);
+    Widget::render(
+        Paragraph::new("Ratatui Gauge Example")
+            .bold()
+            .alignment(Alignment::Center)
+            .fg(CUSTOM_LABEL_COLOR),
+        area,
+        buf,
+    );
 }
 
 fn render_footer(area: Rect, buf: &mut Buffer) {
-    Paragraph::new("Press ENTER to start")
-        .alignment(Alignment::Center)
-        .fg(CUSTOM_LABEL_COLOR)
-        .bold()
-        .render(area, buf);
+    Widget::render(
+        Paragraph::new("Press ENTER to start")
+            .alignment(Alignment::Center)
+            .fg(CUSTOM_LABEL_COLOR)
+            .bold(),
+        area,
+        buf,
+    );
 }
 
 impl App {

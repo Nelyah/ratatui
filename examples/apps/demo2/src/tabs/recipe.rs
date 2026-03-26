@@ -148,10 +148,13 @@ fn render_recipe(area: Rect, buf: &mut Buffer) {
         .iter()
         .map(|(step, text)| Line::from(vec![step.white().bold(), text.gray()]))
         .collect_vec();
-    Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .block(Block::new().padding(Padding::new(0, 1, 0, 0)))
-        .render(area, buf);
+    Widget::render(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::new().padding(Padding::new(0, 1, 0, 0))),
+        area,
+        buf,
+    );
 }
 
 fn render_ingredients(selected_row: usize, area: Rect, buf: &mut Buffer) {

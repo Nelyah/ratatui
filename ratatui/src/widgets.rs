@@ -676,7 +676,7 @@ pub use ratatui_widgets::gauge::{Gauge, LineGauge};
 pub use ratatui_widgets::list::{List, ListDirection, ListItem, ListState};
 pub use ratatui_widgets::logo::{RatatuiLogo, Size as RatatuiLogoSize};
 pub use ratatui_widgets::mascot::{MascotEyeColor, RatatuiMascot};
-pub use ratatui_widgets::paragraph::{Paragraph, Wrap};
+pub use ratatui_widgets::paragraph::{Paragraph, ParagraphState, Wrap};
 pub use ratatui_widgets::scrollbar::{
     ScrollDirection, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };

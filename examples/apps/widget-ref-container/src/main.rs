@@ -46,9 +46,11 @@ struct Greeting;
 
 impl Widget for &Greeting {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new("Hello")
-            .block(Block::bordered())
-            .render(area, buf);
+        Widget::render(
+            Paragraph::new("Hello").block(Block::bordered()),
+            area,
+            buf,
+        );
     }
 }
 
@@ -56,9 +58,11 @@ struct Farewell;
 
 impl Widget for &Farewell {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new("Goodbye")
-            .block(Block::bordered())
-            .render(area, buf);
+        Widget::render(
+            Paragraph::new("Goodbye").block(Block::bordered()),
+            area,
+            buf,
+        );
     }
 }
 

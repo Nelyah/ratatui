@@ -143,14 +143,14 @@ fn render_email(selected_index: usize, area: Rect, buf: &mut Buffer) {
             ]),
             "-".repeat(inner.width as usize).dim().into(),
         ];
-        Paragraph::new(headers)
-            .style(theme.body)
-            .render(headers_area, buf);
+        Widget::render(
+            Paragraph::new(headers).style(theme.body),
+            headers_area,
+            buf,
+        );
         let body = email.body.lines().map(Line::from).collect_vec();
-        Paragraph::new(body)
-            .style(theme.body)
-            .render(body_area, buf);
+        Widget::render(Paragraph::new(body).style(theme.body), body_area, buf);
     } else {
-        Paragraph::new("No email selected").render(inner, buf);
+        Widget::render(Paragraph::new("No email selected"), inner, buf);
     }
 }
